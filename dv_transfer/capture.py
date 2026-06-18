@@ -4,6 +4,7 @@ import platform
 import subprocess
 import time
 import threading
+import shutil
 from pathlib import Path
 from .utils import get_ffmpeg_paths
 
