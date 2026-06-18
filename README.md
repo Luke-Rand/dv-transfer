@@ -34,7 +34,7 @@ The program automatically detects unrecorded "blank tape" gaps (where timecode/r
      ```
 3. Install package dependencies:
    ```bash
-   pip install rich
+   pip install -r requirements.txt
    ```
 4. **FFmpeg & FFprobe:**
    - **Windows:** The application will offer to download FFmpeg automatically on startup.
