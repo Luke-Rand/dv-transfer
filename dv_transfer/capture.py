@@ -97,12 +97,13 @@ def list_capture_devices():
 
     return {'video': video_devices, 'audio': audio_devices}
 
-def run_capture(video_device_name, output_filepath, status_callback=None, stop_event=None):
+def run_capture(video_device_name, output_filepath, status_callback=None, stop_event=None, auto_stop_timeout=0):
     """
     Runs the capture process using FFmpeg (or dvgrab on Linux) in a subprocess.
     Monitors file size growth and handles automatic stopping if it stalls.
     status_callback is a callable: status_callback(elapsed_seconds, file_size_bytes)
     stop_event is a threading.Event used to signal manual stop.
+    auto_stop_timeout is the inactivity period (in seconds) to trigger auto-stop. Set to 0 to disable.
     """
     ffmpeg_path, _ = get_ffmpeg_paths()
     system = platform.system()
@@ -205,8 +206,8 @@ def run_capture(video_device_name, output_filepath, status_callback=None, stop_e
             last_size = file_size
             last_size_time = time.time()
         else:
-            # File size did not increase. If it has been more than 5 seconds, auto stop
-            if time.time() - last_size_time > 5.0 and elapsed > 5.0:
+            # File size did not increase. If it has been more than auto_stop_timeout, auto stop
+            if auto_stop_timeout > 0 and time.time() - last_size_time > auto_stop_timeout and elapsed > 5.0:
                 auto_stop_triggered = True
                 try:
                     process.stdin.write('q\n')
