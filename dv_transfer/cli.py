@@ -147,9 +147,22 @@ def handle_capture():
         console.print("[yellow]No video devices detected automatically.[/yellow]")
         video_device = Prompt.ask("Enter custom video device name (or press Enter for default)", default="")
 
+    # Determine default captures directory and ensure it exists
+    captures_dir = "./captures"
+    Path(captures_dir).mkdir(parents=True, exist_ok=True)
+
     output_file = Prompt.ask("Enter output filename for raw DV capture", default="raw_tape.dv")
     if not output_file.endswith(".dv"):
         output_file += ".dv"
+        
+    # If the user just typed a filename (no directory path), default to captures directory
+    if not os.path.dirname(output_file):
+        output_file = os.path.join(captures_dir, output_file)
+    else:
+        # Ensure parent directory of custom path exists
+        parent_dir = os.path.dirname(output_file)
+        if parent_dir:
+            Path(parent_dir).mkdir(parents=True, exist_ok=True)
         
     auto_stop_timeout_str = Prompt.ask(
         "Enter tape-end auto-stop timeout in seconds (0 to disable, e.g., 10)",
@@ -231,7 +244,46 @@ def handle_capture():
 def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, unattended=False, profile=None):
     """Parses a raw DV file and transcodes segments into MP4 or MKV files."""
     if not input_file:
-        input_file = Prompt.ask("Enter path to raw DV file to parse")
+        # Scan for .dv files in ./captures and the current directory
+        dv_files = []
+        
+        # Scan ./captures if it exists
+        captures_dir = "./captures"
+        if os.path.exists(captures_dir):
+            try:
+                for f in os.listdir(captures_dir):
+                    if f.endswith(".dv"):
+                        dv_files.append(os.path.join(captures_dir, f))
+            except Exception:
+                pass
+                    
+        # Scan current working directory
+        try:
+            for f in os.listdir("."):
+                if f.endswith(".dv"):
+                    full_path = os.path.join(".", f)
+                    full_path_norm = os.path.normpath(full_path)
+                    if not any(os.path.normpath(x) == full_path_norm for x in dv_files):
+                        dv_files.append(full_path)
+        except Exception:
+            pass
+                    
+        if dv_files:
+            console.print("\n[bold cyan]Discovered raw DV capture files:[/bold cyan]")
+            for idx, filepath in enumerate(dv_files):
+                size_mb = os.path.getsize(filepath) / (1024 * 1024)
+                console.print(f"[{idx}] {filepath} ({size_mb:.2f} MB)")
+            console.print(f"[{len(dv_files)}] Enter custom path manually")
+            
+            choices = [str(x) for x in range(len(dv_files) + 1)]
+            choice = Prompt.ask("Select a file to parse", choices=choices, default="0")
+            
+            if int(choice) < len(dv_files):
+                input_file = dv_files[int(choice)]
+            else:
+                input_file = Prompt.ask("Enter custom path to raw DV file")
+        else:
+            input_file = Prompt.ask("Enter path to raw DV file to parse")
     if not os.path.exists(input_file):
         console.print(f"[bold red]File not found: {input_file}[/bold red]")
         return

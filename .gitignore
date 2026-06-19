@@ -66,6 +66,7 @@ bin/
 *.dv
 *.mp4
 clips/
+captures/
 test_clips/
 raw_tape.dv
 test_tape.dv
