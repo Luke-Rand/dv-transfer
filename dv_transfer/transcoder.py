@@ -4,9 +4,9 @@ import platform
 import time
 from .utils import get_ffmpeg_paths
 
-def transcode_segment(input_filepath, output_filepath, start_seconds, end_seconds, creation_time=None, progress_callback=None):
+def transcode_segment(input_filepath, output_filepath, start_seconds, end_seconds, creation_time=None, progress_callback=None, profile="delivery"):
     """
-    Transcodes a segment of a raw DV file into an MP4 file.
+    Transcodes a segment of a raw DV file into an MP4/MKV file.
     Optionally sets the creation_time metadata.
     progress_callback is a callable: progress_callback(percentage_float)
     """
@@ -25,12 +25,26 @@ def transcode_segment(input_filepath, output_filepath, start_seconds, end_second
         "-to", f"{end_seconds:.3f}",
         "-i", input_filepath,
         "-vf", "yadif",
-        "-c:v", "libx264",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k",
     ]
+
+    if profile == "archive":
+        cmd.extend([
+            "-c:v", "ffv1",
+            "-level", "3",
+            "-coder", "1",
+            "-context", "1",
+            "-g", "1",
+            "-c:a", "flac"
+        ])
+    else:
+        # Default to delivery (H.264/AAC)
+        cmd.extend([
+            "-c:v", "libx264",
+            "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+        ])
 
     if creation_time:
         # Format creation_time: "YYYY-MM-DD HH:MM:SS" -> ISO "YYYY-MM-DDTHH:MM:SS"

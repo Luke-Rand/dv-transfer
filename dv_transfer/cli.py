@@ -228,8 +228,8 @@ def handle_capture():
             console.print(f"\n[bold green]✅ Capture stopped successfully.[/bold green]")
         console.print(f"Final size: [bold white]{size_mb:.2f} MB[/bold white] saved to [cyan]{output_file}[/cyan].\n")
 
-def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, unattended=False):
-    """Parses a raw DV file and transcodes segments into MP4 files."""
+def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, unattended=False, profile=None):
+    """Parses a raw DV file and transcodes segments into MP4 or MKV files."""
     if not input_file:
         input_file = Prompt.ask("Enter path to raw DV file to parse")
     if not os.path.exists(input_file):
@@ -237,8 +237,19 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
         return
         
     if not output_dir:
-        output_dir = Prompt.ask("Enter directory to save output MP4 files", default="./clips")
+        output_dir = Prompt.ask("Enter directory to save output clips", default="./clips")
         
+    # Get profile selection
+    if not profile:
+        if unattended:
+            profile = "delivery"
+        else:
+            console.print("\n[bold cyan]Select Output Format Profile:[/bold cyan]")
+            console.print("[1] H.264 / AAC MP4 (Compatible Delivery Format - Recommended)")
+            console.print("[2] FFV1 / FLAC MKV (Lossless Archive Format)")
+            choice = Prompt.ask("Choose profile", choices=["1", "2"], default="1")
+            profile = "delivery" if choice == "1" else "archive"
+            
     # Extract the input file base name (no directory, no extension)
     input_base = os.path.basename(input_file)
     input_name, _ = os.path.splitext(input_base)
@@ -301,11 +312,12 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
     console.print(table)
     
     if not unattended:
-        if not Confirm.ask(f"Do you want to transcode these {len(segments)} sequences to compatible MP4 format now?"):
+        if not Confirm.ask(f"Do you want to transcode these {len(segments)} sequences to compatible MP4/MKV format now?"):
             return
         
     # Transcode segments
-    console.print("\n[bold cyan]Transcoding Sequences to MP4 (H.264 / AAC)...[/bold cyan]")
+    trans_desc = "Transcoding Sequences to MP4 (H.264 / AAC)..." if profile == "delivery" else "Transcoding Sequences to MKV (FFV1 / FLAC)..."
+    console.print(f"\n[bold cyan]{trans_desc}[/bold cyan]")
     
     with Progress(
         TextColumn("[bold green]Overall Progress:"),
@@ -316,14 +328,16 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
     ) as progress:
         overall_task = progress.add_task("Transcoding...", total=len(segments))
         
+        ext = ".mkv" if profile == "archive" else ".mp4"
+        
         for idx, seg in enumerate(segments):
             # Compute file name based on recording date/time or index
             if seg['start_datetime'] and "Unknown" not in seg['start_datetime']:
                 # Format date code to file-safe string: YYYY-MM-DD_HH-MM-SS
                 datetime_str = seg['start_datetime'].replace(" ", "_").replace(":", "-")
-                filename = f"clip_{datetime_str}.mp4"
+                filename = f"clip_{datetime_str}{ext}"
             else:
-                filename = f"clip_sequence_{idx+1:03d}.mp4"
+                filename = f"clip_sequence_{idx+1:03d}{ext}"
                 
             output_filepath = os.path.join(final_output_dir, filename)
             
@@ -345,7 +359,8 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
                     start_seconds=start_sec,
                     end_seconds=end_sec,
                     creation_time=seg['start_datetime'],
-                    progress_callback=trans_cb
+                    progress_callback=trans_cb,
+                    profile=profile
                 )
             except Exception as e:
                 console.print(f"[bold red]❌ Failed to transcode clip {idx+1}: {e}[/bold red]")
@@ -404,9 +419,10 @@ def main():
     parser.add_argument("--interactive", "-i", action="store_true", help="Launch the interactive terminal TUI.")
     parser.add_argument("--list-devices", "-l", action="store_true", help="Lists discovered video and audio capture devices.")
     parser.add_argument("--input", "-in", type=str, help="Path to raw DV file to process/split.")
-    parser.add_argument("--output-dir", "-out", type=str, default="./clips", help="Output directory for MP4 clips.")
+    parser.add_argument("--output-dir", "-out", type=str, default="./clips", help="Output directory for MP4/MKV clips.")
     parser.add_argument("--gap-threshold", "-gap", type=float, default=3.0, help="Gaps longer than this (seconds) trigger clip splits.")
     parser.add_argument("--auto-stop-timeout", "-ast", type=int, default=0, help="Tape-end auto-stop inactivity timeout in seconds (0 to disable).")
+    parser.add_argument("--profile", "-prof", type=str, choices=["delivery", "archive"], default="delivery", help="Output format profile: delivery (H.264/AAC MP4) or archive (FFV1/FLAC MKV)")
     
     args = parser.parse_args()
     
@@ -420,7 +436,8 @@ def main():
             input_file=args.input,
             output_dir=args.output_dir,
             gap_threshold=args.gap_threshold,
-            unattended=True
+            unattended=True,
+            profile=args.profile
         )
     else:
         parser.print_help()
