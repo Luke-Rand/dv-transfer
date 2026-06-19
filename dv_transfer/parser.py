@@ -239,77 +239,146 @@ def parse_dv_file(filepath, progress_callback=None):
         
     return frames_metadata, frame_rate
 
-def detect_recorded_segments(frames_metadata, frame_rate, gap_threshold_seconds=3.0):
+def timecode_to_frames(tc_str, frame_rate):
     """
-    Groups contiguous valid frames into recorded segments, splitting them
-    by gaps of blank tape longer than gap_threshold_seconds.
-    Tiny dropout frames are automatically smoothed over.
+    Converts a timecode string 'hh:mm:ss:ff' to absolute frames.
+    Handles NTSC drop-frame standard if frame_rate is ~29.97.
+    """
+    if not tc_str:
+        return None
+    try:
+        parts = tc_str.split(':')
+        if len(parts) != 4:
+            return None
+        h, m, s, f = map(int, parts)
+        
+        fps_int = int(round(frame_rate))
+        if fps_int == 25:  # PAL
+            return h * 3600 * 25 + m * 60 * 25 + s * 25 + f
+            
+        # NTSC (29.97 fps) drop-frame conversion
+        # Drop frame drops numbers 0 and 1 of the first second of every minute,
+        # except when the minute is a multiple of 10.
+        total_minutes = h * 60 + m
+        total_frames = (total_minutes * 60 + s) * 30 + f
+        dropped_frames = 2 * (total_minutes - total_minutes // 10)
+        return total_frames - dropped_frames
+    except Exception:
+        return None
+
+def is_continuous(meta1, meta2, frame_rate):
+    """
+    Checks if meta2 is continuous with meta1 by comparing frame index diff with timecode frame diff.
+    """
+    if not meta1['timecode'] or not meta2['timecode']:
+        return False
+        
+    tc1 = timecode_to_frames(meta1['timecode'], frame_rate)
+    tc2 = timecode_to_frames(meta2['timecode'], frame_rate)
     
-    Returns a list of segments:
-    [
-      {
-        'start_frame': int,
-        'end_frame': int,
-        'start_timecode': str or None,
-        'end_timecode': str or None,
-        'start_datetime': str or None,
-        'duration_seconds': float
-      },
-      ...
-    ]
+    if tc1 is None or tc2 is None:
+        return False
+        
+    d_idx = meta2['frame_index'] - meta1['frame_index']
+    d_tc = tc2 - tc1
+    
+    # In continuous playback, d_tc should match d_idx.
+    # Allow a tolerance of up to 5 frames for drop-frame differences/jitters.
+    return abs(d_tc - d_idx) <= 5
+
+def detect_recorded_segments(frames_metadata, frame_rate, gap_threshold_seconds=1.0):
     """
-    gap_threshold_frames = int(gap_threshold_seconds * frame_rate)
+    Groups contiguous valid frames into recorded segments by checking for timecode continuity.
+    A segment is split if:
+    1. The timecode value jumps/discontinues.
+    2. The timecode is missing for more than gap_threshold_seconds.
+    
+    Tiny dropouts of missing timecode (less than gap_threshold_seconds) are smoothed
+    over if the timecode before and after the dropout is continuous.
+    """
+    max_gap_frames = int(gap_threshold_seconds * frame_rate)
+    if max_gap_frames < 2:
+        max_gap_frames = 15  # Default to ~0.5 seconds if threshold is too small
+        
     segments = []
+    n = len(frames_metadata)
+    i = 0
     
-    in_segment = False
-    segment_start = None
-    blank_count = 0
-    
-    for i, meta in enumerate(frames_metadata):
-        is_valid = meta['is_valid']
+    while i < n:
+        # 1. Find the start of the next segment (first frame with valid timecode)
+        if not frames_metadata[i]['timecode']:
+            i += 1
+            continue
+            
+        segment_start = i
+        last_valid_idx = i
+        i += 1
         
-        if is_valid:
-            if not in_segment:
-                in_segment = True
-                segment_start = i
-            blank_count = 0
-        else:
-            if in_segment:
-                blank_count += 1
-                if blank_count >= gap_threshold_frames:
-                    # Segment ends just before the blank frames started
-                    segment_end = i - blank_count
-                    segments.append((segment_start, segment_end))
-                    in_segment = False
-                    blank_count = 0
+        # 2. Consume frames in the current segment
+        while i < n:
+            meta_curr = frames_metadata[i]
+            
+            if meta_curr['timecode']:
+                # Check continuity with last_valid_idx
+                if is_continuous(frames_metadata[last_valid_idx], meta_curr, frame_rate):
+                    last_valid_idx = i
+                    i += 1
+                else:
+                    # Discontinuity (timecode jump) -> End current segment, start new one
+                    segments.append((segment_start, last_valid_idx))
+                    break  # Break inner loop, i will point to the start of the next segment
+            else:
+                # Missing timecode. Check if it's a temporary dropout or a real gap.
+                # Look ahead up to max_gap_frames
+                found_next_valid = False
+                lookahead_limit = min(i + max_gap_frames, n)
+                for j in range(i, lookahead_limit):
+                    if frames_metadata[j]['timecode']:
+                        # Found a valid timecode. Check if it is continuous with last_valid_idx
+                        if is_continuous(frames_metadata[last_valid_idx], frames_metadata[j], frame_rate):
+                            # It's a dropout! Smooth over it.
+                            last_valid_idx = j
+                            i = j + 1
+                            found_next_valid = True
+                        else:
+                            # It's a jump after a short gap.
+                            # End current segment at last_valid_idx.
+                            # Next segment will start at j.
+                            segments.append((segment_start, last_valid_idx))
+                            i = j  # i now points to the new segment start
+                            found_next_valid = True
+                        break
+                
+                if found_next_valid:
+                    # We updated i and last_valid_idx, so we continue the inner loop
+                    continue
+                else:
+                    # No valid timecode found within the lookahead window.
+                    # This is a real gap (blank tape).
+                    # End the current segment at last_valid_idx.
+                    segments.append((segment_start, last_valid_idx))
+                    i += max_gap_frames  # Skip the gap window we already searched
+                    break  # Break inner loop to search for next segment start
                     
-    # Append the final active segment if there is one
-    if in_segment:
-        segments.append((segment_start, len(frames_metadata) - 1))
-        
-    # Build detailed segment dictionary metadata
+        # If we reached the end of the file and still in a segment
+        else:
+            # Inner loop finished without 'break' (reached end of tape)
+            segments.append((segment_start, last_valid_idx))
+            
+    # Convert segments to detailed dicts
     detailed_segments = []
     for start, end in segments:
-        # Find first valid timecode and date in the segment
-        start_tc = None
+        start_tc = frames_metadata[start]['timecode']
+        end_tc = frames_metadata[end]['timecode']
         start_date = None
         start_time = None
-        for i in range(start, end + 1):
-            meta = frames_metadata[i]
-            if not start_tc and meta['timecode']:
-                start_tc = meta['timecode']
+        for k in range(start, end + 1):
+            meta = frames_metadata[k]
             if not start_date and meta['rec_date']:
                 start_date = meta['rec_date']
             if not start_time and meta['rec_time']:
                 start_time = meta['rec_time']
-            if start_tc and start_date and start_time:
-                break
-                
-        end_tc = None
-        for i in range(end, start - 1, -1):
-            meta = frames_metadata[i]
-            if not end_tc and meta['timecode']:
-                end_tc = meta['timecode']
+            if start_date and start_time:
                 break
                 
         start_datetime = None

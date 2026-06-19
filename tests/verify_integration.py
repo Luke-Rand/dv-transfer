@@ -54,15 +54,22 @@ def main():
         res = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
         
         print("\n--- CLI STDOUT ---")
-        print(res.stdout)
+        try:
+            print(res.stdout)
+        except UnicodeEncodeError:
+            print(res.stdout.encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8'))
         print("--- CLI STDERR ---")
-        print(res.stderr)
+        try:
+            print(res.stderr)
+        except UnicodeEncodeError:
+            print(res.stderr.encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8'))
         
         assert res.returncode == 0, f"Expected CLI to exit with 0, got {res.returncode}"
         
-        # Verify output files
-        clip1_path = os.path.join(output_dir, "clip_2005-06-12_14-30-00.mp4")
-        clip2_path = os.path.join(output_dir, "clip_2005-06-12_14-30-15.mp4")
+        # Verify output files in subfolder
+        clip_subfolder = os.path.join(output_dir, "test_tape_integration")
+        clip1_path = os.path.join(clip_subfolder, "clip_2005-06-12_14-30-00.mp4")
+        clip2_path = os.path.join(clip_subfolder, "clip_2005-06-12_14-30-15.mp4")
         
         assert os.path.exists(clip1_path), f"Expected {clip1_path} to exist."
         assert os.path.getsize(clip1_path) > 0, f"Expected {clip1_path} to have non-zero file size."

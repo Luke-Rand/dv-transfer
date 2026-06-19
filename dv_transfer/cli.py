@@ -151,6 +151,15 @@ def handle_capture():
     if not output_file.endswith(".dv"):
         output_file += ".dv"
         
+    auto_stop_timeout_str = Prompt.ask(
+        "Enter tape-end auto-stop timeout in seconds (0 to disable, e.g., 10)",
+        default="0"
+    )
+    try:
+        auto_stop_timeout = int(auto_stop_timeout_str)
+    except ValueError:
+        auto_stop_timeout = 0
+        
     console.print("\n[bold yellow]Preparing Capture...[/bold yellow]")
     console.print("1. Set your DV Camcorder to [bold green]VTR / PLAYBACK[/bold green] mode.")
     console.print("2. Rewind the tape to the start (or where you want to begin).")
@@ -174,7 +183,8 @@ def handle_capture():
                 video_device_name=video_device,
                 output_filepath=output_file,
                 status_callback=status_cb,
-                stop_event=stop_event
+                stop_event=stop_event,
+                auto_stop_timeout=auto_stop_timeout
             )
             capture_data['auto_stopped'] = auto_stop
         except Exception as e:
@@ -194,11 +204,12 @@ def handle_capture():
                 size_mb = capture_data['size'] / (1024 * 1024)
                 elapsed_str = time.strftime('%H:%M:%S', time.gmtime(capture_data['elapsed']))
                 
+                auto_stop_status = f"Active ({auto_stop_timeout}s inactivity)" if auto_stop_timeout > 0 else "Disabled (Capture through gaps)"
                 dashboard = (
                     f"⏱️  [bold white]Elapsed time:[/bold white] {elapsed_str}\n"
                     f"📦  [bold white]Raw file size:[/bold white] {size_mb:.2f} MB\n"
                     f"💾  [bold white]Output destination:[/bold white] {output_file}\n"
-                    f"🤖  [bold white]Tape End Auto-Stop:[/bold white] [green]Monitoring...[/green]"
+                    f"🤖  [bold white]Tape End Auto-Stop:[/bold white] [green]{auto_stop_status}[/green]"
                 )
                 live.update(Panel(dashboard, title="Live Capture Status", border_style="red", expand=False))
     except KeyboardInterrupt:
@@ -228,7 +239,13 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
     if not output_dir:
         output_dir = Prompt.ask("Enter directory to save output MP4 files", default="./clips")
         
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    # Extract the input file base name (no directory, no extension)
+    input_base = os.path.basename(input_file)
+    input_name, _ = os.path.splitext(input_base)
+    
+    # Construct a dedicated subdirectory for the clips
+    final_output_dir = os.path.join(output_dir, input_name)
+    Path(final_output_dir).mkdir(parents=True, exist_ok=True)
     
     # Parse DV file
     console.print(f"\n[bold cyan]Analyzing {os.path.basename(input_file)} for tape metadata...[/bold cyan]")
@@ -254,7 +271,7 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
         except Exception as e:
             console.print(f"[bold red]Failed to parse DV file: {e}[/bold red]")
             return
-
+ 
     console.print(f"[bold green]Analysis complete. Total frames parsed: {len(metadata)} ({format(len(metadata)/fps, '.2f')}s at {fps} fps).[/bold green]")
     
     # Detect segments
@@ -308,7 +325,7 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
             else:
                 filename = f"clip_sequence_{idx+1:03d}.mp4"
                 
-            output_filepath = os.path.join(output_dir, filename)
+            output_filepath = os.path.join(final_output_dir, filename)
             
             # Start/End seconds
             start_sec = seg['start_frame'] / fps
@@ -336,7 +353,7 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
                 progress.remove_task(clip_task)
                 progress.update(overall_task, advance=1)
                 
-    console.print(f"\n[bold green]🎉 Success! All clips transcoded and saved in {output_dir}.[/bold green]\n")
+    console.print(f"\n[bold green]🎉 Success! All clips transcoded and saved in {final_output_dir}.[/bold green]\n")
 
 def run_interactive_tui():
     """Launches the interactive TUI menu loop."""
@@ -389,6 +406,7 @@ def main():
     parser.add_argument("--input", "-in", type=str, help="Path to raw DV file to process/split.")
     parser.add_argument("--output-dir", "-out", type=str, default="./clips", help="Output directory for MP4 clips.")
     parser.add_argument("--gap-threshold", "-gap", type=float, default=3.0, help="Gaps longer than this (seconds) trigger clip splits.")
+    parser.add_argument("--auto-stop-timeout", "-ast", type=int, default=0, help="Tape-end auto-stop inactivity timeout in seconds (0 to disable).")
     
     args = parser.parse_args()
     
