@@ -331,6 +331,7 @@ def detect_recorded_segments(frames_metadata, frame_rate, gap_threshold_seconds=
                 # Missing timecode. Check if it's a temporary dropout or a real gap.
                 # Look ahead up to max_gap_frames
                 found_next_valid = False
+                should_break_inner = False
                 lookahead_limit = min(i + max_gap_frames, n)
                 for j in range(i, lookahead_limit):
                     if frames_metadata[j]['timecode']:
@@ -346,10 +347,12 @@ def detect_recorded_segments(frames_metadata, frame_rate, gap_threshold_seconds=
                             # Next segment will start at j.
                             segments.append((segment_start, last_valid_idx))
                             i = j  # i now points to the new segment start
-                            found_next_valid = True
+                            should_break_inner = True
                         break
                 
-                if found_next_valid:
+                if should_break_inner:
+                    break
+                elif found_next_valid:
                     # We updated i and last_valid_idx, so we continue the inner loop
                     continue
                 else:
