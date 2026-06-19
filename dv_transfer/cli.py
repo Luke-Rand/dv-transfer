@@ -371,6 +371,8 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
     trans_desc = "Transcoding Sequences to MP4 (H.264 / AAC)..." if profile == "delivery" else "Transcoding Sequences to MKV (FFV1 / FLAC)..."
     console.print(f"\n[bold cyan]{trans_desc}[/bold cyan]")
     
+    import concurrent.futures
+    
     with Progress(
         TextColumn("{task.description}"),
         BarColumn(),
@@ -382,7 +384,7 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
         
         ext = ".mkv" if profile == "archive" else ".mp4"
         
-        for idx, seg in enumerate(segments):
+        def transcode_worker(idx, seg):
             # Compute file name based on recording date/time or index
             if seg['start_datetime'] and "Unknown" not in seg['start_datetime']:
                 # Format date code to file-safe string: YYYY-MM-DD_HH-MM-SS
@@ -419,6 +421,13 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
             finally:
                 progress.remove_task(clip_task)
                 progress.update(overall_task, advance=1)
+
+        # Bounded concurrency: max 4 workers to prevent overloading CPU
+        max_workers = min(4, os.cpu_count() or 1)
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(transcode_worker, idx, seg) for idx, seg in enumerate(segments)]
+            concurrent.futures.wait(futures)
                 
     console.print(f"\n[bold green]🎉 Success! All clips transcoded and saved in {final_output_dir}.[/bold green]\n")
 
