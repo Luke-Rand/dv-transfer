@@ -24,6 +24,7 @@ def transcode_segment(input_filepath, output_filepath, start_seconds, end_second
         "-ss", f"{start_seconds:.3f}",
         "-to", f"{end_seconds:.3f}",
         "-i", input_filepath,
+        "-vf", "yadif",
         "-c:v", "libx264",
         "-crf", "18",
         "-pix_fmt", "yuv420p",
