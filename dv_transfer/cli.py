@@ -427,7 +427,14 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(transcode_worker, idx, seg) for idx, seg in enumerate(segments)]
-            concurrent.futures.wait(futures)
+            try:
+                concurrent.futures.wait(futures)
+            except KeyboardInterrupt:
+                console.print("\n[bold yellow]⚠️  Transcoding interrupted! Terminating active transcoder subprocesses...[/bold yellow]")
+                from .transcoder import kill_active_processes
+                kill_active_processes()
+                executor.shutdown(wait=True)
+                raise
                 
     console.print(f"\n[bold green]🎉 Success! All clips transcoded and saved in {final_output_dir}.[/bold green]\n")
 
@@ -447,32 +454,39 @@ def run_interactive_tui():
         console.print("[4] Download/Re-install FFmpeg (Windows only)")
         console.print("[5] Exit")
         
-        choice = Prompt.ask("Choose an action", choices=["1", "2", "3", "4", "5"], default="3")
-        
-        if choice == "1":
-            show_device_list()
-        elif choice == "2":
-            # Require FFmpeg verification
-            ffmpeg_path, _ = get_ffmpeg_paths()
-            if not ffmpeg_path or not is_tool_executable(ffmpeg_path):
-                console.print("[bold red]Capture requires FFmpeg installed and working. Please download FFmpeg first.[/bold red]")
-                continue
-            handle_capture()
-        elif choice == "3":
-            # Require FFmpeg verification
-            ffmpeg_path, _ = get_ffmpeg_paths()
-            if not ffmpeg_path or not is_tool_executable(ffmpeg_path):
-                console.print("[bold red]Splitting/Transcoding requires FFmpeg. Please download FFmpeg first.[/bold red]")
-                continue
-            handle_parse_and_split()
-        elif choice == "4":
-            if platform.system() != "Windows":
-                console.print("[yellow]Automatic FFmpeg download is only available on Windows. For other OS platforms, use brew or apt.[/yellow]")
-            else:
-                run_ffmpeg_download()
-        elif choice == "5":
-            console.print("[cyan]Goodbye![/cyan]")
+        try:
+            choice = Prompt.ask("Choose an action", choices=["1", "2", "3", "4", "5"], default="3")
+        except KeyboardInterrupt:
+            console.print("\n[cyan]Goodbye![/cyan]")
             break
+            
+        try:
+            if choice == "1":
+                show_device_list()
+            elif choice == "2":
+                # Require FFmpeg verification
+                ffmpeg_path, _ = get_ffmpeg_paths()
+                if not ffmpeg_path or not is_tool_executable(ffmpeg_path):
+                    console.print("[bold red]Capture requires FFmpeg installed and working. Please download FFmpeg first.[/bold red]")
+                    continue
+                handle_capture()
+            elif choice == "3":
+                # Require FFmpeg verification
+                ffmpeg_path, _ = get_ffmpeg_paths()
+                if not ffmpeg_path or not is_tool_executable(ffmpeg_path):
+                    console.print("[bold red]Splitting/Transcoding requires FFmpeg. Please download FFmpeg first.[/bold red]")
+                    continue
+                handle_parse_and_split()
+            elif choice == "4":
+                if platform.system() != "Windows":
+                    console.print("[yellow]Automatic FFmpeg download is only available on Windows. For other OS platforms, use brew or apt.[/yellow]")
+                else:
+                    run_ffmpeg_download()
+            elif choice == "5":
+                console.print("[cyan]Goodbye![/cyan]")
+                break
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Action cancelled by user. Returning to main menu...[/yellow]")
 
 def main():
     """Main CLI entry point parses arguments or runs interactive menu."""
@@ -487,21 +501,25 @@ def main():
     
     args = parser.parse_args()
     
-    # Default to interactive if no specific action argument is given
-    if args.interactive or (len(sys.argv) == 1):
-        run_interactive_tui()
-    elif args.list_devices:
-        show_device_list()
-    elif args.input:
-        handle_parse_and_split(
-            input_file=args.input,
-            output_dir=args.output_dir,
-            gap_threshold=args.gap_threshold,
-            unattended=True,
-            profile=args.profile
-        )
-    else:
-        parser.print_help()
+    try:
+        # Default to interactive if no specific action argument is given
+        if args.interactive or (len(sys.argv) == 1):
+            run_interactive_tui()
+        elif args.list_devices:
+            show_device_list()
+        elif args.input:
+            handle_parse_and_split(
+                input_file=args.input,
+                output_dir=args.output_dir,
+                gap_threshold=args.gap_threshold,
+                unattended=True,
+                profile=args.profile
+            )
+        else:
+            parser.print_help()
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Operation cancelled by user. Exiting...[/yellow]")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()

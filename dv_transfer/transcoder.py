@@ -2,7 +2,34 @@ import os
 import subprocess
 import platform
 import time
+import threading
 from .utils import get_ffmpeg_paths
+
+# Thread-safe registry to track active FFmpeg transcoding subprocesses
+_active_processes = set()
+_active_processes_lock = threading.Lock()
+
+def register_process(proc):
+    with _active_processes_lock:
+        _active_processes.add(proc)
+
+def unregister_process(proc):
+    with _active_processes_lock:
+        _active_processes.discard(proc)
+
+def kill_active_processes():
+    """Terminates all registered transcoding subprocesses immediately."""
+    with _active_processes_lock:
+        for proc in list(_active_processes):
+            try:
+                proc.terminate()
+                proc.wait(timeout=1)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        _active_processes.clear()
 
 def transcode_segment(input_filepath, output_filepath, start_seconds, end_seconds, creation_time=None, progress_callback=None, profile="delivery"):
     """
@@ -64,6 +91,7 @@ def transcode_segment(input_filepath, output_filepath, start_seconds, end_second
             text=True,
             bufsize=0
         )
+        register_process(process)
 
         try:
             # Read lines from progress output
@@ -86,11 +114,18 @@ def transcode_segment(input_filepath, output_filepath, start_seconds, end_second
                     if progress_callback:
                         progress_callback(1.0)
         finally:
+            unregister_process(process)
             # Wait for the process to finish
             process.wait()
             exit_code = process.returncode
             
         if exit_code != 0:
+            # Cleanup incomplete files on error/cancellation
+            if os.path.exists(output_filepath):
+                try:
+                    os.remove(output_filepath)
+                except Exception:
+                    pass
             stderr_file.seek(0)
             stderr = stderr_file.read()
             raise RuntimeError(f"Transcoding failed with exit code {exit_code}.\nError details:\n{stderr}")
