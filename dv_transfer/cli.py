@@ -320,13 +320,13 @@ def handle_parse_and_split(input_file=None, output_dir=None, gap_threshold=3.0, 
     console.print(f"\n[bold cyan]{trans_desc}[/bold cyan]")
     
     with Progress(
-        TextColumn("[bold green]Overall Progress:"),
+        TextColumn("{task.description}"),
         BarColumn(),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         TimeElapsedColumn(),
         console=console
     ) as progress:
-        overall_task = progress.add_task("Transcoding...", total=len(segments))
+        overall_task = progress.add_task("[bold green]Overall Progress:", total=len(segments))
         
         ext = ".mkv" if profile == "archive" else ".mp4"
         
